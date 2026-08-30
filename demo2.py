@@ -664,7 +664,7 @@ def main():
     outline_enabled = True
     zoom = 4.2
 
-    default_light_pos = np.array([3.0, 4.0, 3.0], dtype=np.float32)
+    default_light_pos = np.array([0.0, 1.5, 0.0], dtype=np.float32)
     light_pos = default_light_pos.copy()
     light_move_speed = 2.5
     show_light_marker = True
@@ -836,7 +836,7 @@ def main():
 
         # Wskaźnik światła poza kadrem
         direction = project_light_offscreen(light_pos, eye, target, up, fovy, aspect)
-        if direction is not None:
+        if show_light_marker and direction is not None:
             dir_x, dir_y = direction
             margin = 46
             half_w = width / 2.0 - margin
