@@ -18,10 +18,12 @@ Sterowanie:
     - W / S                    -> przesuwanie światła w osi Z (przód/tył)
     - A / D                    -> przesuwanie światła w osi X (lewo/prawo)
     - Q / E                    -> przesuwanie światła w osi Y (dół/góra)
-    - M                        -> pokaż/ukryj znacznik (marker) światła
     - R                        -> reset pozycji światła do wartości domyślnej
-    - Kliknięcie na ikonkę     -> wybór kształtu (torus / kula / sześcian / stożek)
-    - ESC                      -> wyjście
+
+    Przy starcie programu pojawia się pop-up z powyższą instrukcją obsługi,
+    narysowany wewnątrz samego okna gry (nie jako osobne okno systemowe).
+    Można go zamknąć klawiszem H, klawiszem ESC albo kliknięciem gdziekolwiek
+    na ekranie, i otworzyć ponownie w dowolnej chwili klawiszem H.
 
 Opis techniki:
     Cell shading (toon shading) polega na kwantyzacji oświetlenia
@@ -40,10 +42,6 @@ Opis techniki:
     W lewym górnym rogu ekranu wyświetlane są ikonki pozwalające wybrać
     jeden z kilku kształtów (torus, kula, sześcian, stożek) - każdy z nich
     inaczej pokazuje działanie cell shadingu (płaskie ściany vs krzywizny).
-
-    Gdy źródło światła znajdzie się poza polem widzenia kamery (np. z tyłu
-    obiektu albo za kadrem), na krawędzi ekranu pojawia się pulsująca
-    strzałka wskazująca kierunek, w którym aktualnie znajduje się światło.
 """
 
 import sys
@@ -55,6 +53,89 @@ from pygame.locals import DOUBLEBUF, OPENGL, KEYDOWN, K_ESCAPE, K_SPACE, K_o
 from OpenGL.GL import *
 from OpenGL.GL import shaders
 from OpenGL.GLU import gluPerspective
+
+
+# ---------------------------------------------------------------------------
+# Zawartość okienka pop-up z instrukcją obsługi (renderowanego wewnątrz okna
+# OpenGL - najpierw jako obraz na powierzchni pygame, potem jako tekstura).
+# Każdy wiersz to para (styl, tekst); "blank" wstawia tylko odstęp pionowy.
+# ---------------------------------------------------------------------------
+
+INSTRUCTIONS_LINES = [
+    ("title", "Instrukcja obsługi - Cell Shading Demo"),
+    ("blank", ""),
+    ("heading", "STEROWANIE OBIEKTEM"),
+    ("normal", "Strzałki LEWO / PRAWO   -  obrót obiektu (yaw)"),
+    ("normal", "Strzałki GÓRA / DÓŁ     -  obrót obiektu (pitch)"),
+    ("normal", "Kółko myszy             -  przybliżanie / oddalanie (zoom)"),
+    ("blank", ""),
+    ("heading", "STEROWANIE ŚWIATŁEM"),
+    ("normal", "W / S   -  przesuwanie światła w osi Z (przód / tył)"),
+    ("normal", "A / D   -  przesuwanie światła w osi X (lewo / prawo)"),
+    ("normal", "Q / E   -  przesuwanie światła w osi Y (dół / góra)"),
+    ("normal", "R       -  reset pozycji światła do wartości domyślnej"),
+    ("blank", ""),
+    ("heading", "WYGLĄD I KSZTAŁT"),
+    ("normal", "SPACJA  -  zmiana liczby poziomów cieniowania (2-6)"),
+    ("normal", "O       -  włącz / wyłącz czarny kontur (outline)"),
+    ("blank", ""),
+]
+
+
+def build_instructions_texture():
+    """Renderuje tekst instrukcji na powierzchni pygame i wgrywa go jako
+    teksturę OpenGL z kanałem alfa, żeby można było narysować go jako
+    pop-up wewnątrz okna gry (a nie w osobnym oknie systemowym)."""
+    fonts = {
+        "title": pygame.font.SysFont("consolas,couriernew,monospace", 24, bold=True),
+        "heading": pygame.font.SysFont("consolas,couriernew,monospace", 19, bold=True),
+        "normal": pygame.font.SysFont("consolas,couriernew,monospace", 17),
+        "hint": pygame.font.SysFont("consolas,couriernew,monospace", 15, italic=True),
+    }
+    colors = {
+        "title": (255, 255, 255),
+        "heading": (255, 190, 110),
+        "normal": (222, 224, 232),
+        "hint": (165, 172, 188),
+    }
+
+    line_gap = 5
+    rendered = []
+    max_w = 0
+    total_h = 0
+    for style, text in INSTRUCTIONS_LINES:
+        if style == "blank":
+            h = fonts["normal"].get_height() // 2
+            rendered.append((None, h))
+        else:
+            surf = fonts[style].render(text, True, colors[style])
+            rendered.append((surf, surf.get_height()))
+            max_w = max(max_w, surf.get_width())
+        total_h += rendered[-1][1] + line_gap
+    total_h -= line_gap
+
+    pad_x, pad_y = 32, 26
+    surface_w = max_w + pad_x * 2
+    surface_h = total_h + pad_y * 2
+
+    canvas = pygame.Surface((surface_w, surface_h), pygame.SRCALPHA)
+    canvas.fill((0, 0, 0, 0))
+    y = pad_y
+    for surf, h in rendered:
+        if surf is not None:
+            canvas.blit(surf, (pad_x, y))
+        y += h + line_gap
+
+    tex_data = pygame.image.tostring(canvas, "RGBA", True)
+    tex_id = glGenTextures(1)
+    glBindTexture(GL_TEXTURE_2D, tex_id)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, surface_w, surface_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, tex_data)
+    glBindTexture(GL_TEXTURE_2D, 0)
+    return tex_id, surface_w, surface_h
 
 # ---------------------------------------------------------------------------
 # Generatory siatek - kilka różnych kształtów do wyboru
@@ -375,7 +456,7 @@ void main() {
 """
 
 # Prosty shader HUD - pozycje 2D podawane już we współrzędnych NDC (-1..1),
-# używany do rysowania ikonek wyboru kształtu i strzałki wskazującej światło.
+# używany do rysowania ikonek wyboru kształtu.
 HUD_VERTEX_SHADER = """
 #version 330 core
 layout(location = 0) in vec2 in_pos;
@@ -390,6 +471,30 @@ uniform vec4 u_color;
 out vec4 frag_color;
 void main() {
     frag_color = u_color;
+}
+"""
+
+# Shader HUD z teksturą (pozycja + współrzędne UV) - używany do narysowania
+# tekstu instrukcji (wcześniej wyrenderowanego na obraz z kanałem alfa)
+# jako pop-up wewnątrz okna gry.
+HUD_TEX_VERTEX_SHADER = """
+#version 330 core
+layout(location = 0) in vec2 in_pos;
+layout(location = 1) in vec2 in_uv;
+out vec2 v_uv;
+void main() {
+    v_uv = in_uv;
+    gl_Position = vec4(in_pos, 0.0, 1.0);
+}
+"""
+
+HUD_TEX_FRAGMENT_SHADER = """
+#version 330 core
+in vec2 v_uv;
+uniform sampler2D u_tex;
+out vec4 frag_color;
+void main() {
+    frag_color = texture(u_tex, v_uv);
 }
 """
 
@@ -499,14 +604,6 @@ def triangle_tris_ndc(cx, cy, size, width, height):
     return [pixel_to_ndc(*p1, width, height), pixel_to_ndc(*p2, width, height), pixel_to_ndc(*p3, width, height)]
 
 
-def arrow_tris_ndc(cx, cy, angle, size, width, height):
-    """Trójkątna strzałka skierowana pod kątem 'angle' (0 = w prawo)."""
-    tip = (cx + math.cos(angle) * size, cy - math.sin(angle) * size)
-    back_l = (cx + math.cos(angle + 2.6) * size * 0.55, cy - math.sin(angle + 2.6) * size * 0.55)
-    back_r = (cx + math.cos(angle - 2.6) * size * 0.55, cy - math.sin(angle - 2.6) * size * 0.55)
-    return [pixel_to_ndc(*tip, width, height), pixel_to_ndc(*back_l, width, height), pixel_to_ndc(*back_r, width, height)]
-
-
 def draw_hud_shape(program, points, color, mode):
     data = np.array(points, dtype=np.float32).flatten()
     vao = glGenVertexArrays(1)
@@ -524,42 +621,42 @@ def draw_hud_shape(program, points, color, mode):
     glDeleteVertexArrays(1, [vao])
 
 
-def project_light_offscreen(light_pos, eye, target, up, fovy, aspect):
-    """Zwraca kierunek (dx, dy) na ekranie wskazujący światło, jeśli jest ono
-    poza kadrem kamery (lub za nią), albo None jeśli światło jest widoczne."""
-    eye = np.array(eye, dtype=np.float64)
-    target = np.array(target, dtype=np.float64)
-    up = np.array(up, dtype=np.float64)
+def textured_rect_ndc(cx, cy, half_w, half_h, width, height):
+    """Prostokąt (x, y, u, v) - 2 trójkąty (6 wierzchołków) do narysowania
+    tekstury (np. wyrenderowanego tekstu) jako pop-up wewnątrz okna."""
+    top_l = pixel_to_ndc(cx - half_w, cy - half_h, width, height)
+    top_r = pixel_to_ndc(cx + half_w, cy - half_h, width, height)
+    bot_l = pixel_to_ndc(cx - half_w, cy + half_h, width, height)
+    bot_r = pixel_to_ndc(cx + half_w, cy + half_h, width, height)
+    # UV: tekstura wgrana z odwróceniem (flip=True przy tostring), więc
+    # "dół" obrazu = v=0, "góra" obrazu = v=1.
+    return [
+        (*top_l, 0.0, 1.0), (*bot_l, 0.0, 0.0), (*bot_r, 1.0, 0.0),
+        (*top_l, 0.0, 1.0), (*bot_r, 1.0, 0.0), (*top_r, 1.0, 1.0),
+    ]  # GL_TRIANGLES
 
-    f = target - eye
-    f = f / np.linalg.norm(f)
-    s = np.cross(f, up)
-    s = s / np.linalg.norm(s)
-    u = np.cross(s, f)
 
-    p = np.array(light_pos, dtype=np.float64) - eye
-    view_x = np.dot(p, s)
-    view_y = np.dot(p, u)
-    forward = np.dot(p, f)  # > 0 = przed kamerą (wzdłuż osi patrzenia)
-
-    fpersp = 1.0 / math.tan(math.radians(fovy) / 2.0)
-    if forward > 1e-3:
-        ndc_x = (fpersp / aspect) * view_x / forward
-        ndc_y = fpersp * view_y / forward
-        if abs(ndc_x) <= 1.0 and abs(ndc_y) <= 1.0:
-            return None  # światło widoczne w kadrze
-        dir_x, dir_y = ndc_x, ndc_y
-    else:
-        # Światło za kamerą (lub dokładnie w jej płaszczyźnie) - dzielenie
-        # perspektywiczne byłoby tu bezsensowne, więc używamy surowego
-        # przesunięcia bocznego jako kierunku wskaźnika.
-        dir_x, dir_y = view_x, view_y
-
-    length = math.hypot(dir_x, dir_y)
-    if length < 1e-6:
-        dir_x, dir_y = 0.0, 1.0
-        length = 1.0
-    return (dir_x / length, dir_y / length)
+def draw_textured_quad(program, quad, texture_id):
+    data = np.array(quad, dtype=np.float32).flatten()
+    vao = glGenVertexArrays(1)
+    glBindVertexArray(vao)
+    vbo = glGenBuffers(1)
+    glBindBuffer(GL_ARRAY_BUFFER, vbo)
+    glBufferData(GL_ARRAY_BUFFER, data.nbytes, data, GL_DYNAMIC_DRAW)
+    stride = 4 * 4
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
+    glEnableVertexAttribArray(0)
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(2 * 4))
+    glEnableVertexAttribArray(1)
+    glActiveTexture(GL_TEXTURE0)
+    glBindTexture(GL_TEXTURE_2D, texture_id)
+    glUseProgram(program)
+    glUniform1i(glGetUniformLocation(program, "u_tex"), 0)
+    glDrawArrays(GL_TRIANGLES, 0, len(quad))
+    glBindVertexArray(0)
+    glBindTexture(GL_TEXTURE_2D, 0)
+    glDeleteBuffers(1, [vbo])
+    glDeleteVertexArrays(1, [vao])
 
 
 def main():
@@ -643,6 +740,7 @@ def main():
         background_program = compile_program(BACKGROUND_VERTEX_SHADER, BACKGROUND_FRAGMENT_SHADER)
         marker_program = compile_program(MARKER_VERTEX_SHADER, MARKER_FRAGMENT_SHADER)
         hud_program = compile_program(HUD_VERTEX_SHADER, HUD_FRAGMENT_SHADER)
+        hud_tex_program = compile_program(HUD_TEX_VERTEX_SHADER, HUD_TEX_FRAGMENT_SHADER)
     except Exception as e:
         print("!!! Blad kompilacji/linkowania shaderow:")
         print(e)
@@ -652,6 +750,11 @@ def main():
     err = glGetError()
     if err != GL_NO_ERROR:
         print("Uwaga - GL error po kompilacji shaderow:", err)
+
+    # Wyrenderuj instrukcję obsługi raz jako teksturę - pop-up pokazuje się
+    # od razu po starcie i można go potem przełączać klawiszem H.
+    instructions_tex, instructions_tex_w, instructions_tex_h = build_instructions_texture()
+    show_instructions = True
 
     fovy = 45.0
     aspect = width / height
@@ -687,18 +790,19 @@ def main():
     panel_h = icon_margin * 2 + icon_size
 
     clock = pygame.time.Clock()
-    time_elapsed = 0.0
     running = True
     while running:
         dt = clock.tick(60) / 1000.0
-        time_elapsed += dt
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == KEYDOWN:
                 if event.key == K_ESCAPE:
-                    running = False
+                    if show_instructions:
+                        show_instructions = False  # zamknij pop-up zamiast wyjść z programu
+                    else:
+                        running = False
                 elif event.key == K_SPACE:
                     levels = levels + 1 if levels < 6 else 2
                 elif event.key == K_o:
@@ -707,14 +811,19 @@ def main():
                     show_light_marker = not show_light_marker
                 elif event.key == pygame.K_r:
                     light_pos = default_light_pos.copy()
+                elif event.key == pygame.K_h:
+                    show_instructions = not show_instructions
             elif event.type == pygame.MOUSEWHEEL:
                 zoom = max(2.0, min(10.0, zoom - event.y * 0.3))
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                mx, my = event.pos
-                for icon in icon_defs:
-                    if abs(mx - icon["cx"]) <= icon["half"] and abs(my - icon["cy"]) <= icon["half"]:
-                        current_shape = icon["name"]
-                        break
+                if show_instructions:
+                    show_instructions = False  # kliknięcie gdziekolwiek zamyka pop-up
+                else:
+                    mx, my = event.pos
+                    for icon in icon_defs:
+                        if abs(mx - icon["cx"]) <= icon["half"] and abs(my - icon["cy"]) <= icon["half"]:
+                            current_shape = icon["name"]
+                            break
 
         keys = pygame.key.get_pressed()
         if keys[pygame.K_LEFT]:
@@ -834,28 +943,25 @@ def main():
                 pts = triangle_tris_ndc(icon["cx"], icon["cy"], r, width, height)
                 draw_hud_shape(hud_program, pts, base_color, GL_TRIANGLES)
 
-        # Wskaźnik światła poza kadrem
-        direction = project_light_offscreen(light_pos, eye, target, up, fovy, aspect)
-        if show_light_marker and direction is not None:
-            dir_x, dir_y = direction
-            margin = 46
-            half_w = width / 2.0 - margin
-            half_h = height / 2.0 - margin
-            t = min(
-                (half_w / abs(dir_x)) if abs(dir_x) > 1e-6 else float("inf"),
-                (half_h / abs(dir_y)) if abs(dir_y) > 1e-6 else float("inf"),
-            )
-            edge_x = width / 2.0 + dir_x * t
-            edge_y = height / 2.0 - dir_y * t
-            screen_angle = math.atan2(-dir_y, dir_x)
+        # --- Pop-up z instrukcją obsługi (rysowany na samym wierzchu) ---
+        if show_instructions:
+            max_w = width - 80
+            max_h = height - 80
+            scale = min(max_w / instructions_tex_w, max_h / instructions_tex_h, 1.0)
+            disp_w = instructions_tex_w * scale
+            disp_h = instructions_tex_h * scale
 
-            pulse = 1.0 + 0.18 * math.sin(time_elapsed * 4.0)
-            arrow_size = 16 * pulse
-            arrow_pts = arrow_tris_ndc(edge_x, edge_y, screen_angle, arrow_size, width, height)
-            draw_hud_shape(hud_program, arrow_pts, (1.0, 0.85, 0.35, 0.95), GL_TRIANGLES)
+            # Półprzezroczysta zasłona całego ekranu - podkreśla, że to modal
+            dim_pts = rect_fan_ndc(width / 2, height / 2, width / 2, height / 2, width, height)
+            draw_hud_shape(hud_program, dim_pts, (0.0, 0.0, 0.0, 0.45), GL_TRIANGLE_FAN)
 
-            dot_pts = circle_fan_ndc(edge_x, edge_y, 5 * pulse, 12, width, height)
-            draw_hud_shape(hud_program, dot_pts, (1.0, 0.85, 0.35, 0.6), GL_TRIANGLE_FAN)
+            # Ciemny panel pod tekstem
+            panel_pts = rect_fan_ndc(width / 2, height / 2, disp_w / 2 + 10, disp_h / 2 + 10, width, height)
+            draw_hud_shape(hud_program, panel_pts, (0.07, 0.08, 0.12, 0.92), GL_TRIANGLE_FAN)
+
+            # Sam tekst (tekstura z kanałem alfa)
+            text_quad = textured_rect_ndc(width / 2, height / 2, disp_w / 2, disp_h / 2, width, height)
+            draw_textured_quad(hud_tex_program, text_quad, instructions_tex)
 
         glDisable(GL_BLEND)
         glEnable(GL_DEPTH_TEST)
@@ -864,7 +970,7 @@ def main():
 
         pygame.display.set_caption(
             "Cell Shading Demo | ksztalt: {} | poziomy: {} | kontur: {} | "
-            "swiatlo: ({:.1f}, {:.1f}, {:.1f}) | FPS: {:.0f}".format(
+            "swiatlo: ({:.1f}, {:.1f}, {:.1f}) | FPS: {:.0f} | [H]=pomoc".format(
                 current_shape,
                 levels,
                 "ON" if outline_enabled else "OFF",
