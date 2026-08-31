@@ -1,49 +1,3 @@
-"""
-Demonstrator Cell Shadingu (Toon Shading) w Pythonie + OpenGL
-================================================================
-Wymagania (instalacja):
-    pip install pygame PyOpenGL PyOpenGL_accelerate numpy
-
-Uruchomienie:
-    python cell_shader_demo.py
-
-Sterowanie:
-    - Strzałki LEWO/PRAWO      -> obrót obiektu (yaw) - obiekt i tak obraca
-                                  się bardzo powoli sam, żeby dobrze było
-                                  widać zmiany oświetlenia
-    - Strzałki GÓRA/DÓŁ        -> obrót obiektu (pitch)
-    - Kółko myszy              -> zoom
-    - SPACJA                   -> zmiana liczby poziomów cieniowania (2-6)
-    - O                        -> włącz/wyłącz czarny kontur (outline)
-    - W / S                    -> przesuwanie światła w osi Z (przód/tył)
-    - A / D                    -> przesuwanie światła w osi X (lewo/prawo)
-    - Q / E                    -> przesuwanie światła w osi Y (dół/góra)
-    - R                        -> reset pozycji światła do wartości domyślnej
-
-    Przy starcie programu pojawia się pop-up z powyższą instrukcją obsługi,
-    narysowany wewnątrz samego okna gry (nie jako osobne okno systemowe).
-    Można go zamknąć klawiszem H, klawiszem ESC albo kliknięciem gdziekolwiek
-    na ekranie, i otworzyć ponownie w dowolnej chwili klawiszem H.
-
-Opis techniki:
-    Cell shading (toon shading) polega na kwantyzacji oświetlenia
-    do kilku dyskretnych poziomów jasności zamiast płynnego gradientu,
-    co daje efekt "komiksowy" / rysunkowy. Dodatkowo dorysowywany jest
-    czarny kontur (outline) metodą "backface expansion" - siatka jest
-    powiększana wzdłuż normalnych i renderowana na czarno od tyłu.
-
-    Tło nieba jest renderowane jako pełnoekranowy gradient, podobnie
-    posteryzowany na pasma, żeby cała scena spójnie wyglądała jak "komiks".
-
-    Obiekt obraca się teraz bardzo wolno automatycznie, dzięki czemu
-    łatwiej jest obserwować, jak zmiana pozycji światła wpływa na
-    kwantyzowane cieniowanie na zakrzywionych powierzchniach.
-
-    W lewym górnym rogu ekranu wyświetlane są ikonki pozwalające wybrać
-    jeden z kilku kształtów (torus, kula, sześcian, stożek) - każdy z nich
-    inaczej pokazuje działanie cell shadingu (płaskie ściany vs krzywizny).
-"""
-
 import sys
 import math
 import ctypes
@@ -56,9 +10,7 @@ from OpenGL.GLU import gluPerspective
 
 
 # ---------------------------------------------------------------------------
-# Zawartość okienka pop-up z instrukcją obsługi (renderowanego wewnątrz okna
-# OpenGL - najpierw jako obraz na powierzchni pygame, potem jako tekstura).
-# Każdy wiersz to para (styl, tekst); "blank" wstawia tylko odstęp pionowy.
+# Zawartość okienka z instrukcją obsługi
 # ---------------------------------------------------------------------------
 
 INSTRUCTIONS_LINES = [
@@ -82,10 +34,7 @@ INSTRUCTIONS_LINES = [
 ]
 
 
-def build_instructions_texture():
-    """Renderuje tekst instrukcji na powierzchni pygame i wgrywa go jako
-    teksturę OpenGL z kanałem alfa, żeby można było narysować go jako
-    pop-up wewnątrz okna gry (a nie w osobnym oknie systemowym)."""
+def build_instructions_surface_data():
     fonts = {
         "title": pygame.font.SysFont("consolas,couriernew,monospace", 24, bold=True),
         "heading": pygame.font.SysFont("consolas,couriernew,monospace", 19, bold=True),
@@ -126,16 +75,42 @@ def build_instructions_texture():
             canvas.blit(surf, (pad_x, y))
         y += h + line_gap
 
-    tex_data = pygame.image.tostring(canvas, "RGBA", True)
-    tex_id = glGenTextures(1)
-    glBindTexture(GL_TEXTURE_2D, tex_id)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, surface_w, surface_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, tex_data)
-    glBindTexture(GL_TEXTURE_2D, 0)
-    return tex_id, surface_w, surface_h
+    pixel_data = pygame.image.tostring(canvas, "RGBA", True)
+    return pixel_data, surface_w, surface_h
+
+
+def draw_instructions_popup(pixel_data, tex_w, tex_h, screen_w, screen_h):
+    max_w = screen_w - 80
+    max_h = screen_h - 80
+    scale = min(max_w / tex_w, max_h / tex_h, 1.0)
+    disp_w = tex_w * scale
+    disp_h = tex_h * scale
+
+    def to_ndc(px, py):
+        return (px / screen_w) * 2.0 - 1.0, 1.0 - (py / screen_h) * 2.0
+
+    def draw_quad(cx, cy, half_w, half_h, color):
+        x0, y0 = to_ndc(cx - half_w, cy - half_h)
+        x1, y1 = to_ndc(cx + half_w, cy + half_h)
+        glColor4f(*color)
+        glBegin(GL_QUADS)
+        glVertex2f(x0, y0)
+        glVertex2f(x1, y0)
+        glVertex2f(x1, y1)
+        glVertex2f(x0, y1)
+        glEnd()
+
+    draw_quad(screen_w / 2, screen_h / 2, screen_w / 2, screen_h / 2, (0.0, 0.0, 0.0, 0.45))
+    draw_quad(screen_w / 2, screen_h / 2, disp_w / 2 + 10, disp_h / 2 + 10, (0.07, 0.08, 0.12, 0.92))
+
+    left = screen_w / 2 - disp_w / 2
+    bottom = screen_h / 2 + disp_h / 2
+    ndc_x, ndc_y = to_ndc(left, bottom)
+    glRasterPos2f(ndc_x, ndc_y)
+    glPixelZoom(scale, scale)
+    glDrawPixels(tex_w, tex_h, GL_RGBA, GL_UNSIGNED_BYTE, pixel_data)
+    glPixelZoom(1.0, 1.0)
+    glColor4f(1.0, 1.0, 1.0, 1.0)
 
 # ---------------------------------------------------------------------------
 # Generatory siatek - kilka różnych kształtów do wyboru
@@ -182,7 +157,6 @@ def generate_torus(R=1.0, r=0.4, seg_major=48, seg_minor=24):
 
 
 def generate_sphere_shaded(radius=1.15, stacks=20, slices=32):
-    """Kula z gładkimi normalnymi (normalna = znormalizowana pozycja)."""
     verts = []
     norms = []
     indices = []
@@ -215,7 +189,6 @@ def generate_sphere_shaded(radius=1.15, stacks=20, slices=32):
 
 
 def generate_cube(size=1.5):
-    """Sześcian z płaskimi normalnymi na ściankę (ostre krawędzie cieniowania)."""
     s = size / 2.0
     faces = [
         ((0, 0, 1), (-s, -s, s), (s, -s, s), (s, s, s), (-s, s, s)),      # +Z
@@ -243,9 +216,6 @@ def generate_cube(size=1.5):
 
 
 def generate_cone(radius=0.95, height=1.7, segments=32):
-    """Stożek - normalna na powierzchni bocznej jest stała wzdłuż tworzącej
-    dla danego kąta theta, więc dublowanie wierzchołka szczytu z tą samą
-    normalną co pierścień podstawy daje poprawne, gładkie cieniowanie."""
     half_h = height / 2.0
     verts = []
     norms = []
@@ -289,9 +259,8 @@ def generate_cone(radius=0.95, height=1.7, segments=32):
     indices = np.array(indices, dtype=np.uint32)
     return verts, norms, indices
 
-
+# Znacznik źródła światła
 def generate_sphere(radius=1.0, stacks=8, slices=8):
-    """Prosta kula (same pozycje, bez normalnych) - używana jako znacznik światła."""
     verts = []
     indices = []
 
@@ -455,7 +424,6 @@ void main() {
 }
 """
 
-# Prosty shader HUD - pozycje 2D podawane już we współrzędnych NDC (-1..1),
 # używany do rysowania ikonek wyboru kształtu.
 HUD_VERTEX_SHADER = """
 #version 330 core
@@ -471,30 +439,6 @@ uniform vec4 u_color;
 out vec4 frag_color;
 void main() {
     frag_color = u_color;
-}
-"""
-
-# Shader HUD z teksturą (pozycja + współrzędne UV) - używany do narysowania
-# tekstu instrukcji (wcześniej wyrenderowanego na obraz z kanałem alfa)
-# jako pop-up wewnątrz okna gry.
-HUD_TEX_VERTEX_SHADER = """
-#version 330 core
-layout(location = 0) in vec2 in_pos;
-layout(location = 1) in vec2 in_uv;
-out vec2 v_uv;
-void main() {
-    v_uv = in_uv;
-    gl_Position = vec4(in_pos, 0.0, 1.0);
-}
-"""
-
-HUD_TEX_FRAGMENT_SHADER = """
-#version 330 core
-in vec2 v_uv;
-uniform sampler2D u_tex;
-out vec4 frag_color;
-void main() {
-    frag_color = texture(u_tex, v_uv);
 }
 """
 
@@ -566,7 +510,7 @@ def translation_scale(pos, scale=1.0):
 
 
 # ---------------------------------------------------------------------------
-# Pomoce do rysowania interfejsu 2D (HUD): ikonki kształtów + wskaźnik światła
+# Pomoce do rysowania interfejsu 2D: ikonki kształtów + wskaźnik światła
 # ---------------------------------------------------------------------------
 
 def pixel_to_ndc(px, py, width, height):
@@ -621,52 +565,12 @@ def draw_hud_shape(program, points, color, mode):
     glDeleteVertexArrays(1, [vao])
 
 
-def textured_rect_ndc(cx, cy, half_w, half_h, width, height):
-    """Prostokąt (x, y, u, v) - 2 trójkąty (6 wierzchołków) do narysowania
-    tekstury (np. wyrenderowanego tekstu) jako pop-up wewnątrz okna."""
-    top_l = pixel_to_ndc(cx - half_w, cy - half_h, width, height)
-    top_r = pixel_to_ndc(cx + half_w, cy - half_h, width, height)
-    bot_l = pixel_to_ndc(cx - half_w, cy + half_h, width, height)
-    bot_r = pixel_to_ndc(cx + half_w, cy + half_h, width, height)
-    # UV: tekstura wgrana z odwróceniem (flip=True przy tostring), więc
-    # "dół" obrazu = v=0, "góra" obrazu = v=1.
-    return [
-        (*top_l, 0.0, 1.0), (*bot_l, 0.0, 0.0), (*bot_r, 1.0, 0.0),
-        (*top_l, 0.0, 1.0), (*bot_r, 1.0, 0.0), (*top_r, 1.0, 1.0),
-    ]  # GL_TRIANGLES
-
-
-def draw_textured_quad(program, quad, texture_id):
-    data = np.array(quad, dtype=np.float32).flatten()
-    vao = glGenVertexArrays(1)
-    glBindVertexArray(vao)
-    vbo = glGenBuffers(1)
-    glBindBuffer(GL_ARRAY_BUFFER, vbo)
-    glBufferData(GL_ARRAY_BUFFER, data.nbytes, data, GL_DYNAMIC_DRAW)
-    stride = 4 * 4
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
-    glEnableVertexAttribArray(0)
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(2 * 4))
-    glEnableVertexAttribArray(1)
-    glActiveTexture(GL_TEXTURE0)
-    glBindTexture(GL_TEXTURE_2D, texture_id)
-    glUseProgram(program)
-    glUniform1i(glGetUniformLocation(program, "u_tex"), 0)
-    glDrawArrays(GL_TRIANGLES, 0, len(quad))
-    glBindVertexArray(0)
-    glBindTexture(GL_TEXTURE_2D, 0)
-    glDeleteBuffers(1, [vbo])
-    glDeleteVertexArrays(1, [vao])
-
-
 def main():
     pygame.init()
 
     pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 3)
     pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, 3)
-    pygame.display.gl_set_attribute(
-        pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_CORE
-    )
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_COMPATIBILITY)
     pygame.display.gl_set_attribute(pygame.GL_DEPTH_SIZE, 24)
     pygame.display.gl_set_attribute(pygame.GL_DOUBLEBUFFER, 1)
 
@@ -681,7 +585,7 @@ def main():
     glEnable(GL_DEPTH_TEST)
     glClearColor(0.08, 0.09, 0.12, 1.0)
 
-    # --- Wgrywanie siatek wszystkich dostępnych kształtów ---
+    # Wgrywanie siatek wszystkich dostępnych kształtów
     def upload_mesh(verts, norms, indices):
         vertex_data = np.hstack([verts, norms]).astype(np.float32)
         vao = glGenVertexArrays(1)
@@ -709,7 +613,7 @@ def main():
     shape_order = ["torus", "sphere", "cube", "cone"]
     current_shape = "torus"
 
-    # --- Tło pełnoekranowe ---
+    # Tło
     bg_quad = np.array([-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0], dtype=np.float32)
     bg_vao = glGenVertexArrays(1)
     glBindVertexArray(bg_vao)
@@ -720,7 +624,7 @@ def main():
     glEnableVertexAttribArray(0)
     glBindVertexArray(0)
 
-    # --- Znacznik (marker) światła ---
+    # Znacznik światła
     marker_verts, marker_indices = generate_sphere(radius=1.0, stacks=8, slices=8)
     marker_vao = glGenVertexArrays(1)
     glBindVertexArray(marker_vao)
@@ -740,7 +644,6 @@ def main():
         background_program = compile_program(BACKGROUND_VERTEX_SHADER, BACKGROUND_FRAGMENT_SHADER)
         marker_program = compile_program(MARKER_VERTEX_SHADER, MARKER_FRAGMENT_SHADER)
         hud_program = compile_program(HUD_VERTEX_SHADER, HUD_FRAGMENT_SHADER)
-        hud_tex_program = compile_program(HUD_TEX_VERTEX_SHADER, HUD_TEX_FRAGMENT_SHADER)
     except Exception as e:
         print("!!! Blad kompilacji/linkowania shaderow:")
         print(e)
@@ -751,9 +654,7 @@ def main():
     if err != GL_NO_ERROR:
         print("Uwaga - GL error po kompilacji shaderow:", err)
 
-    # Wyrenderuj instrukcję obsługi raz jako teksturę - pop-up pokazuje się
-    # od razu po starcie i można go potem przełączać klawiszem H.
-    instructions_tex, instructions_tex_w, instructions_tex_h = build_instructions_texture()
+    instructions_data, instructions_w, instructions_h = build_instructions_surface_data()
     show_instructions = True
 
     fovy = 45.0
@@ -762,7 +663,7 @@ def main():
 
     angle = 0.0
     pitch = 0.0
-    auto_rotate_speed = 0.06  # bardzo wolny obrót - łatwiej obserwować światło
+    auto_rotate_speed = 0.06
     levels = 4
     outline_enabled = True
     zoom = 4.2
@@ -776,7 +677,7 @@ def main():
     bg_top_color = (0.16, 0.18, 0.32)
     bg_band_count = 6
 
-    # --- Definicje ikonek wyboru kształtu (górny lewy róg) ---
+    # Definicje ikonek wyboru kształtu 
     icon_size = 54
     icon_margin = 18
     icon_gap = 14
@@ -800,7 +701,7 @@ def main():
             elif event.type == KEYDOWN:
                 if event.key == K_ESCAPE:
                     if show_instructions:
-                        show_instructions = False  # zamknij pop-up zamiast wyjść z programu
+                        show_instructions = False 
                     else:
                         running = False
                 elif event.key == K_SPACE:
@@ -859,7 +760,7 @@ def main():
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-        # --- Przebieg 0: tło ---
+        # Przebieg 0: tło
         glDisable(GL_DEPTH_TEST)
         glUseProgram(background_program)
         glUniform3f(glGetUniformLocation(background_program, "u_bottom_color"), *bg_bottom_color)
@@ -873,7 +774,7 @@ def main():
         shape_vao, shape_index_count = shapes[current_shape]
         glBindVertexArray(shape_vao)
 
-        # --- Przebieg 1: kontur (outline) ---
+        # Przebieg 1: kontur (outline)
         if outline_enabled:
             glUseProgram(outline_program)
             glCullFace(GL_FRONT)
@@ -885,7 +786,7 @@ def main():
             glDrawElements(GL_TRIANGLES, shape_index_count, GL_UNSIGNED_INT, None)
             glDisable(GL_CULL_FACE)
 
-        # --- Przebieg 2: cell shading ---
+        # Przebieg 2: cell shading
         glUseProgram(toon_program)
         glUniformMatrix4fv(glGetUniformLocation(toon_program, "u_model"), 1, GL_FALSE, model)
         glUniformMatrix4fv(glGetUniformLocation(toon_program, "u_view"), 1, GL_FALSE, view)
@@ -899,7 +800,7 @@ def main():
 
         glBindVertexArray(0)
 
-        # --- Przebieg 3: znacznik światła (widoczny, gdy jest w kadrze) ---
+        # Przebieg 3: znacznik światła
         if show_light_marker:
             marker_model = translation_scale(light_pos, scale=0.12)
             glUseProgram(marker_program)
@@ -911,7 +812,7 @@ def main():
             glDrawElements(GL_TRIANGLES, len(marker_indices), GL_UNSIGNED_INT, None)
             glBindVertexArray(0)
 
-        # --- Przebieg 4: HUD (ikonki kształtów + wskaźnik światła poza kadrem) ---
+        # Przebieg 4: HUD (ikonki kształtów + wskaźnik światła poza kadrem)
         glDisable(GL_DEPTH_TEST)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
@@ -943,25 +844,9 @@ def main():
                 pts = triangle_tris_ndc(icon["cx"], icon["cy"], r, width, height)
                 draw_hud_shape(hud_program, pts, base_color, GL_TRIANGLES)
 
-        # --- Pop-up z instrukcją obsługi (rysowany na samym wierzchu) ---
+        # Pop-up z instrukcją obsługi
         if show_instructions:
-            max_w = width - 80
-            max_h = height - 80
-            scale = min(max_w / instructions_tex_w, max_h / instructions_tex_h, 1.0)
-            disp_w = instructions_tex_w * scale
-            disp_h = instructions_tex_h * scale
-
-            # Półprzezroczysta zasłona całego ekranu - podkreśla, że to modal
-            dim_pts = rect_fan_ndc(width / 2, height / 2, width / 2, height / 2, width, height)
-            draw_hud_shape(hud_program, dim_pts, (0.0, 0.0, 0.0, 0.45), GL_TRIANGLE_FAN)
-
-            # Ciemny panel pod tekstem
-            panel_pts = rect_fan_ndc(width / 2, height / 2, disp_w / 2 + 10, disp_h / 2 + 10, width, height)
-            draw_hud_shape(hud_program, panel_pts, (0.07, 0.08, 0.12, 0.92), GL_TRIANGLE_FAN)
-
-            # Sam tekst (tekstura z kanałem alfa)
-            text_quad = textured_rect_ndc(width / 2, height / 2, disp_w / 2, disp_h / 2, width, height)
-            draw_textured_quad(hud_tex_program, text_quad, instructions_tex)
+            draw_instructions_popup(instructions_data, instructions_w, instructions_h, width, height)
 
         glDisable(GL_BLEND)
         glEnable(GL_DEPTH_TEST)
