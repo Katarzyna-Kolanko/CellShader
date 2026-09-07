@@ -626,13 +626,32 @@ class Editor:
 
     def save_file(self):
         if not self.filename:
-            self.filename = "nowy_plik.py"
+            self.filename = "nowy_plik.txt"
+
+        filename = self._get_available_filename(self.filename)
+
         try:
-            with open(self.filename, "w", encoding="utf-8") as fh:
+            with open(filename, "w", encoding="utf-8") as fh:
                 fh.write("\n".join(self.lines))
+            self.filename = filename  # <-- critical: persist the actual name used
             self.set_status("Zapisano: " + self.filename)
         except Exception as exc:
             self.set_status("Błąd zapisu: " + str(exc))
+
+    def _get_available_filename(self, filename):
+        if not os.path.exists(filename):
+            return filename
+        base, ext = os.path.splitext(filename)
+        counter = 1
+        if base[-1] < '0' or base[-1] > '9':
+            new_filename = f"{base}_{counter}{ext}"
+        else:
+            new_filename = f"{base[:-2:]}_{counter}{ext}"
+        while True:
+            if not os.path.exists(new_filename):
+                return new_filename
+            new_filename = f"{base[:-2:]}_{counter}{ext}"
+            counter += 1
 
     # ---------------------------------------------------------- wyszukiwanie
 
