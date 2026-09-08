@@ -626,7 +626,7 @@ class Editor:
 
     def save_file(self):
         if not self.filename:
-            self.filename = "nowy_plik.txt"
+            self.filename = "nowy_plik.py"
 
         filename = self._get_available_filename(self.filename)
 
